@@ -1,0 +1,80 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  AGENT
+  MEMBER
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum SenderType {
+  VISITOR
+  AGENT
+  MEMBER
+}
+
+model User {
+  id               String        @id @default(cuid())
+  email            String?       @unique
+  username         String?       @unique
+  password         String
+  name             String
+  role             Role          @default(AGENT)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  projects         Project[]
+  assignedSessions ChatSession[] @relation("AgentSessions")
+  memberSessions   ChatSession[] @relation("MemberSessions")
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  domain      String
+  widgetToken String        @unique @default(uuid())
+  ownerId     String
+  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  sessions    ChatSession[]
+}
+
+model ChatSession {
+  id              String        @id @default(cuid())
+  projectId       String
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  visitorId       String
+  visitorName     String?
+  memberId        String?
+  member          User?         @relation("MemberSessions", fields: [memberId], references: [id], onDelete: SetNull)
+  status          SessionStatus @default(OPEN)
+  assignedAgentId String?
+  assignedAgent   User?         @relation("AgentSessions", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  messages        Message[]
+}
+
+model Message {
+  id         String      @id @default(cuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderType SenderType
+  senderId   String
+  content    String      @db.Text
+  createdAt  DateTime    @default(now())
+}

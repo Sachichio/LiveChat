@@ -1,0 +1,14 @@
+{
+  "name": "livechat-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "bun --filter @livechat/api dev",
+    "dev:dashboard": "bun --filter @livechat/dashboard dev",
+    "dev:widget": "bun --filter @livechat/widget dev",
+    "seed:admin": "bun run apps/api/src/scripts/create-admin.ts"
+  }
+}
