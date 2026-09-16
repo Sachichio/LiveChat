@@ -118,3 +118,7 @@ dist
 # Prisma
 /packages/database/prisma/*.db
 /packages/database/prisma/*.sqlite
+
+# Uploaded Media Files
+apps/api/public/uploads/*
+!apps/api/public/uploads/.gitkeep

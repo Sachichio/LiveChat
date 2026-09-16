@@ -18,6 +18,7 @@ interface Message {
   senderType: "VISITOR" | "MEMBER" | "AGENT";
   senderId: string;
   content: string;
+  attachmentUrl?: string | null;
   createdAt: string;
 }
 
@@ -38,6 +39,9 @@ function LiveChatWidget() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -248,6 +252,60 @@ function LiveChatWidget() {
     );
 
     setInputValue("");
+  };
+
+  // Upload file attachment (max 5MB, image only)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !session || !socketRef.current) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
+      e.target.value = "";
+      return;
+    }
+
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
+      e.target.value = "";
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengunggah file");
+
+      const senderType = currentMember ? "MEMBER" : "VISITOR";
+      const senderId = currentMember
+        ? currentMember.id
+        : (localStorage.getItem("livechat_guest_vid") || "visitor");
+
+      socketRef.current.send(
+        JSON.stringify({
+          type: "message",
+          sessionId: session.id,
+          senderType,
+          senderId,
+          content: inputValue.trim() || "",
+          attachmentUrl: data.url
+        })
+      );
+      setInputValue("");
+    } catch (err: any) {
+      alert(err.message || "Gagal mengunggah gambar");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   return (
@@ -549,7 +607,25 @@ function LiveChatWidget() {
                             lineHeight: "1.4"
                           }}
                         >
-                          <div>{m.content}</div>
+                          {m.attachmentUrl && (
+                            <div style={{ marginBottom: "6px" }}>
+                              <img
+                                src={m.attachmentUrl}
+                                alt="Lampiran"
+                                onClick={() => setLightboxImg(m.attachmentUrl!)}
+                                title="Klik untuk memperbesar"
+                                style={{
+                                  maxWidth: "100%",
+                                  maxHeight: "180px",
+                                  borderRadius: "8px",
+                                  objectFit: "cover",
+                                  display: "block",
+                                  cursor: "pointer"
+                                }}
+                              />
+                            </div>
+                          )}
+                          {m.content && <div>{m.content}</div>}
                           <div
                             style={{
                               fontSize: "9px",
@@ -572,48 +648,80 @@ function LiveChatWidget() {
 
           {/* Footer Input */}
           {isJoined && (
-            <form
-              onSubmit={handleSendMessage}
-              style={{
-                padding: "10px 12px",
-                backgroundColor: "#ffffff",
-                borderTop: "1px solid #e2e8f0",
-                display: "flex",
-                gap: "8px"
-              }}
-            >
+            <div style={{ backgroundColor: "#ffffff", borderTop: "1px solid #e2e8f0", padding: "8px 12px" }}>
               <input
-                type="text"
-                placeholder="Tulis pesan..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                style={{
-                  flex: 1,
-                  padding: "8px 12px",
-                  borderRadius: "20px",
-                  border: "1px solid #cbd5e1",
-                  fontSize: "13px",
-                  outline: "none"
-                }}
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept="image/*"
+                style={{ display: "none" }}
               />
-              <button
-                type="submit"
-                disabled={!inputValue.trim()}
+              <form
+                onSubmit={handleSendMessage}
                 style={{
-                  padding: "8px 14px",
-                  backgroundColor: "#4f46e5",
-                  color: "#ffffff",
-                  borderRadius: "20px",
-                  border: "none",
-                  fontWeight: "bold",
-                  fontSize: "12px",
-                  cursor: "pointer",
-                  opacity: inputValue.trim() ? 1 : 0.5
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
                 }}
               >
-                Kirim
-              </button>
-            </form>
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Unggah Gambar (Maks 5 MB)"
+                  style={{
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "50%",
+                    border: "1px solid #cbd5e1",
+                    backgroundColor: "#f8fafc",
+                    color: "#475569",
+                    fontSize: "16px",
+                    fontWeight: "bold",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    flexShrink: 0
+                  }}
+                >
+                  +
+                </button>
+                <input
+                  type="text"
+                  placeholder={uploading ? "Mengunggah gambar (maks 5MB)..." : "Tulis pesan..."}
+                  value={inputValue}
+                  disabled={uploading}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    borderRadius: "20px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "13px",
+                    outline: "none"
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={(!inputValue.trim() && !uploading) || uploading}
+                  style={{
+                    padding: "8px 14px",
+                    backgroundColor: "#4f46e5",
+                    color: "#ffffff",
+                    borderRadius: "20px",
+                    border: "none",
+                    fontWeight: "bold",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    opacity: (!inputValue.trim() && !uploading) || uploading ? 0.5 : 1,
+                    flexShrink: 0
+                  }}
+                >
+                  Kirim
+                </button>
+              </form>
+            </div>
           )}
         </div>
       )}
@@ -645,6 +753,59 @@ function LiveChatWidget() {
           </svg>
         )}
       </button>
+
+      {/* Lightbox Pop-up Modal Gambar */}
+      {lightboxImg && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.85)",
+            zIndex: 99999999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            cursor: "zoom-out"
+          }}
+          onClick={() => setLightboxImg(null)}
+        >
+          <div style={{ position: "relative", maxWidth: "90%", maxHeight: "90%" }}>
+            <div
+              style={{
+                position: "absolute",
+                top: "-36px",
+                right: "0px",
+                color: "#ffffff",
+                fontSize: "13px",
+                cursor: "pointer",
+                backgroundColor: "rgba(255, 255, 255, 0.2)",
+                padding: "3px 12px",
+                borderRadius: "20px"
+              }}
+              onClick={() => setLightboxImg(null)}
+            >
+              ✕ Tutup
+            </div>
+            <img
+              src={lightboxImg}
+              alt="Pratinjau"
+              style={{
+                maxWidth: "100%",
+                maxHeight: "85vh",
+                borderRadius: "8px",
+                objectFit: "contain",
+                cursor: "default",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

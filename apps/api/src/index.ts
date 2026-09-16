@@ -25,6 +25,54 @@ const app = new Elysia()
     return Bun.file(widgetPath);
   })
 
+  // --- SERVE UPLOADED FILES ---
+  .get("/uploads/*", ({ params, set }) => {
+    const filename = params["*"];
+    const filePath = path.resolve(import.meta.dir, "../public/uploads", filename);
+    const file = Bun.file(filePath);
+    return file;
+  })
+
+  // --- UPLOAD GAMBAR ENDPOINT (MAX 5MB, IMAGE ONLY) ---
+  .post("/api/upload", async ({ body, set }: any) => {
+    try {
+      const file = body?.file || body?.image;
+      if (!file) {
+        set.status = 400;
+        return { error: "File gambar tidak ditemukan!" };
+      }
+
+      // Validasi MIME type
+      if (!file.type || !file.type.startsWith("image/")) {
+        set.status = 400;
+        return { error: "Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diizinkan!" };
+      }
+
+      // Validasi ukuran (maksimal 5 MB = 5 * 1024 * 1024 bytes)
+      const MAX_SIZE = 5 * 1024 * 1024;
+      if (file.size > MAX_SIZE) {
+        set.status = 400;
+        return { error: "Ukuran file terlalu besar! Maksimal 5 MB." };
+      }
+
+      const uploadDir = path.resolve(import.meta.dir, "../public/uploads");
+      const ext = path.extname(file.name) || ".png";
+      const uniqueName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+      const destPath = path.join(uploadDir, uniqueName);
+
+      await Bun.write(destPath, file);
+
+      return {
+        url: `http://localhost:4000/uploads/${uniqueName}`,
+        fileName: file.name,
+        size: file.size
+      };
+    } catch (err: any) {
+      set.status = 500;
+      return { error: "Gagal mengunggah gambar: " + (err.message || err) };
+    }
+  })
+
   // --- ADMIN & AGENT AUTH ENDPOINTS ---
   .group("/api/auth", (group) =>
     group
@@ -429,13 +477,14 @@ const app = new Elysia()
       sessionId: t.String(),
       senderType: t.String(), // "VISITOR" | "AGENT" | "MEMBER"
       senderId: t.String(),
-      content: t.Optional(t.String())
+      content: t.Optional(t.String()),
+      attachmentUrl: t.Optional(t.String())
     }),
     open(ws) {
       // client connected
     },
     async message(ws, message) {
-      const { type, sessionId, senderType, senderId, content } = message;
+      const { type, sessionId, senderType, senderId, content, attachmentUrl } = message;
 
       if (type === "join") {
         ws.subscribe(`session-${sessionId}`);
@@ -447,7 +496,7 @@ const app = new Elysia()
         return;
       }
 
-      if (type === "message" && content) {
+      if (type === "message" && (content || attachmentUrl)) {
         // Simpan pesan ke MySQL
         const finalSenderType =
           senderType === "AGENT"
@@ -461,7 +510,8 @@ const app = new Elysia()
             sessionId,
             senderType: finalSenderType as any,
             senderId,
-            content
+            content: content || "",
+            attachmentUrl: attachmentUrl || null
           }
         });
 

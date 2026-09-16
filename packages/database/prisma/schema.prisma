@@ -70,11 +70,13 @@ model ChatSession {
 }
 
 model Message {
-  id         String      @id @default(cuid())
-  sessionId  String
-  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  senderType SenderType
-  senderId   String
-  content    String      @db.Text
-  createdAt  DateTime    @default(now())
+  id            String      @id @default(cuid())
+  sessionId     String
+  session       ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderType    SenderType
+  senderId      String
+  content       String      @db.Text
+  attachmentUrl String?     @db.Text
+  createdAt     DateTime    @default(now())
 }
+

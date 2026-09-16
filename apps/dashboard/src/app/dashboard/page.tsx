@@ -37,9 +37,10 @@ interface ChatSession {
 
 interface Message {
   id: string;
-  senderType: "VISITOR" | "AGENT";
+  senderType: "VISITOR" | "AGENT" | "MEMBER";
   senderId: string;
   content: string;
+  attachmentUrl?: string | null;
   createdAt: string;
 }
 
@@ -55,6 +56,9 @@ export default function DashboardPage() {
   const [copied, setCopied] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -208,6 +212,55 @@ export default function DashboardPage() {
     );
 
     setInputMessage("");
+  };
+
+  // Upload file attachment (max 5MB, image only)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedSession || !socketRef.current) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
+      e.target.value = "";
+      return;
+    }
+
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
+      e.target.value = "";
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("http://localhost:4000/api/upload", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengunggah file");
+
+      socketRef.current.send(
+        JSON.stringify({
+          type: "message",
+          sessionId: selectedSession.id,
+          senderType: "AGENT",
+          senderId: user?.id || "agent",
+          content: inputMessage.trim() || "",
+          attachmentUrl: data.url
+        })
+      );
+      setInputMessage("");
+    } catch (err: any) {
+      alert(err.message || "Gagal mengunggah gambar");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   // Create project
@@ -386,9 +439,17 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 truncate">
-                  {s.messages && s.messages[0]?.content
-                    ? s.messages[0].content
-                    : "Obrolan baru dibuka"}
+                  {(() => {
+                    const lastMsg = s.messages && s.messages.length > 0 ? s.messages[s.messages.length - 1] : null;
+                    if (!lastMsg) return "Obrolan baru dibuka";
+                    if (lastMsg.content && lastMsg.content.trim()) return lastMsg.content;
+                    if (lastMsg.attachmentUrl) {
+                      if (lastMsg.senderType === "AGENT") return "📷 Anda mengirim gambar";
+                      const senderName = s.visitorName || (s.memberId ? "Member" : "Tamu");
+                      return `📷 ${senderName} mengirim gambar`;
+                    }
+                    return "Obrolan baru dibuka";
+                  })()}
                 </p>
               </button>
             ))
@@ -500,7 +561,18 @@ export default function DashboardPage() {
                             : "bg-white text-slate-800 border border-slate-200 rounded-bl-none"
                         }`}
                       >
-                        <p>{m.content}</p>
+                        {m.attachmentUrl && (
+                          <div className="mb-2">
+                            <img
+                              src={m.attachmentUrl}
+                              alt="Lampiran"
+                              onClick={() => setLightboxImg(m.attachmentUrl!)}
+                              className="rounded-lg max-h-64 max-w-full object-cover border border-black/10 hover:opacity-90 transition cursor-pointer shadow-sm"
+                              title="Klik untuk memperbesar"
+                            />
+                          </div>
+                        )}
+                        {m.content && <p>{m.content}</p>}
                         <span
                           className={`block text-[10px] mt-1 text-right ${
                             isAgent ? "text-indigo-200" : "text-slate-400"
@@ -521,18 +593,35 @@ export default function DashboardPage() {
 
             {/* Input Bar */}
             <div className="p-4 bg-white border-t border-slate-200">
-              <form onSubmit={handleSendMessage} className="flex gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept="image/*"
+                className="hidden"
+              />
+              <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Unggah Gambar (Maks 5 MB)"
+                  className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-indigo-600 transition flex items-center justify-center shrink-0 disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
                 <input
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder="Ketik balasan untuk pengunjung..."
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm text-slate-800"
+                  placeholder={uploading ? "Sedang mengunggah gambar (maks 5MB)..." : "Ketik balasan untuk pengunjung..."}
+                  disabled={uploading}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm text-slate-800 disabled:bg-slate-50"
                 />
                 <button
                   type="submit"
-                  disabled={!inputMessage.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-medium text-sm transition"
+                  disabled={(!inputMessage.trim() && !uploading) || uploading}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-medium text-sm transition shrink-0"
                 >
                   <Send className="w-4 h-4" /> Kirim
                 </button>
@@ -590,6 +679,30 @@ export default function DashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Pop-up Modal Gambar */}
+      {lightboxImg && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setLightboxImg(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => setLightboxImg(null)}
+              className="absolute -top-10 right-0 text-white/90 hover:text-white text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-full transition flex items-center gap-1 font-medium cursor-pointer"
+            >
+              ✕ Tutup (Klik luar untuk menutup)
+            </button>
+            <img
+              src={lightboxImg}
+              alt="Pratinjau Gambar"
+              className="max-w-full max-h-[85vh] rounded-xl object-contain cursor-default shadow-2xl border border-white/10"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

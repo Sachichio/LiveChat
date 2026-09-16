@@ -15,7 +15,8 @@ import {
   Shield,
   LogOut,
   KeyRound,
-  UserPlus
+  UserPlus,
+  Plus
 } from "lucide-react";
 
 interface Message {
@@ -23,6 +24,7 @@ interface Message {
   senderType: "VISITOR" | "AGENT" | "MEMBER";
   senderId: string;
   content: string;
+  attachmentUrl?: string | null;
   createdAt: string;
 }
 
@@ -38,6 +40,9 @@ export default function PublicChatRoomPage() {
   const [inputMessage, setInputMessage] = useState("");
   const [isJoined, setIsJoined] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Authentication & Identity State
   const [currentMember, setCurrentMember] = useState<any>(null);
@@ -257,6 +262,60 @@ export default function PublicChatRoomPage() {
     );
 
     setInputMessage("");
+  };
+
+  // Upload file attachment (max 5MB, image only)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !session || !socketRef.current) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
+      e.target.value = "";
+      return;
+    }
+
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
+      e.target.value = "";
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("http://localhost:4000/api/upload", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengunggah file");
+
+      const senderType = currentMember ? "MEMBER" : "VISITOR";
+      const senderId = currentMember
+        ? currentMember.id
+        : localStorage.getItem("livechat_guest_vid") || "guest";
+
+      socketRef.current.send(
+        JSON.stringify({
+          type: "message",
+          sessionId: session.id,
+          senderType,
+          senderId,
+          content: inputMessage.trim() || "",
+          attachmentUrl: data.url
+        })
+      );
+      setInputMessage("");
+    } catch (err: any) {
+      alert(err.message || "Gagal mengunggah gambar");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   const handleCopyLink = () => {
@@ -576,7 +635,18 @@ export default function PublicChatRoomPage() {
                               : "bg-slate-800 text-slate-100 border border-slate-700 rounded-tl-none"
                           }`}
                         >
-                          {m.content}
+                          {m.attachmentUrl && (
+                            <div className="mb-2">
+                              <img
+                                src={m.attachmentUrl}
+                                alt="Lampiran"
+                                onClick={() => setLightboxImg(m.attachmentUrl!)}
+                                className="rounded-lg max-h-64 max-w-full object-cover border border-white/10 hover:opacity-90 transition cursor-pointer shadow-sm"
+                                title="Klik untuk memperbesar"
+                              />
+                            </div>
+                          )}
+                          {m.content && <div>{m.content}</div>}
                         </div>
                       </div>
                     </div>
@@ -588,20 +658,39 @@ export default function PublicChatRoomPage() {
 
             {/* INPUT BAR */}
             <div className="p-4 bg-slate-900 border-t border-slate-800">
-              <form onSubmit={handleSendMessage} className="flex gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept="image/*"
+                className="hidden"
+              />
+              <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Unggah Gambar (Maks 5 MB)"
+                  className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 hover:text-white transition flex items-center justify-center shrink-0 disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
                 <input
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={`Tulis pesan sebagai ${
-                    currentMember ? `@${currentMember.username}` : guestName || "Tamu"
-                  }...`}
-                  className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  placeholder={
+                    uploading
+                      ? "Sedang mengunggah gambar (maks 5MB)..."
+                      : `Tulis pesan sebagai ${currentMember ? `@${currentMember.username}` : guestName || "Tamu"}...`
+                  }
+                  disabled={uploading}
+                  className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm disabled:opacity-60"
                 />
                 <button
                   type="submit"
-                  disabled={!inputMessage.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-medium text-sm transition shadow-md shadow-indigo-600/30"
+                  disabled={(!inputMessage.trim() && !uploading) || uploading}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-medium text-sm transition shadow-md shadow-indigo-600/30 shrink-0"
                 >
                   <Send className="w-4 h-4" />
                   <span className="hidden sm:inline">Kirim</span>
@@ -611,6 +700,30 @@ export default function PublicChatRoomPage() {
           </>
         )}
       </div>
+
+      {/* Lightbox Pop-up Modal Gambar */}
+      {lightboxImg && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setLightboxImg(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => setLightboxImg(null)}
+              className="absolute -top-10 right-0 text-white/90 hover:text-white text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-full transition flex items-center gap-1 font-medium cursor-pointer"
+            >
+              ✕ Tutup (Klik luar untuk menutup)
+            </button>
+            <img
+              src={lightboxImg}
+              alt="Pratinjau Gambar"
+              className="max-w-full max-h-[85vh] rounded-xl object-contain cursor-default shadow-2xl border border-white/10"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
