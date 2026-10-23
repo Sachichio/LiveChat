@@ -18,7 +18,12 @@ const app = new Elysia()
       secret: process.env.JWT_SECRET || "livechat-jwt-secret-key"
     })
   )
-  .get("/", () => ({ status: "ok", message: "LiveChat API & WebSocket is running 🚀" }))
+  .get("/", () => ({
+    status: "ok",
+    name: "Lobbio Support",
+    version: "3.2.0",
+    message: "Lobbio Support API & WebSocket is running 🚀"
+  }))
   .get("/widget.js", ({ set }) => {
     set.headers["content-type"] = "application/javascript";
     const widgetPath = path.resolve(import.meta.dir, "../../widget/dist/widget.js");
@@ -33,7 +38,7 @@ const app = new Elysia()
     return file;
   })
 
-  // --- UPLOAD GAMBAR ENDPOINT (MAX 5MB, IMAGE ONLY) ---
+  // --- UPLOAD GAMBAR ENDPOINT (MAX 2MB, IMAGE ONLY) ---
   .post("/api/upload", async ({ body, set }: any) => {
     try {
       const file = body?.file || body?.image;
@@ -43,16 +48,17 @@ const app = new Elysia()
       }
 
       // Validasi MIME type
-      if (!file.type || !file.type.startsWith("image/")) {
+      const allowedMimes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+      if (!file.type || !allowedMimes.includes(file.type.toLowerCase())) {
         set.status = 400;
-        return { error: "Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diizinkan!" };
+        return { error: "Format file tidak didukung! Hanya gambar (PNG, JPG, JPEG, WEBP, GIF) yang diperbolehkan!" };
       }
 
-      // Validasi ukuran (maksimal 5 MB = 5 * 1024 * 1024 bytes)
-      const MAX_SIZE = 5 * 1024 * 1024;
+      // Validasi ukuran (maksimal 2 MB = 2 * 1024 * 1024 bytes)
+      const MAX_SIZE = 2 * 1024 * 1024;
       if (file.size > MAX_SIZE) {
         set.status = 400;
-        return { error: "Ukuran file terlalu besar! Maksimal 5 MB." };
+        return { error: "Ukuran file terlalu besar! Maksimal 2 MB." };
       }
 
       const uploadDir = path.resolve(import.meta.dir, "../public/uploads");
@@ -540,4 +546,4 @@ const app = new Elysia()
   })
   .listen(process.env.PORT || 4000);
 
-console.log(`🦊 Elysia LiveChat Server berjalan di http://localhost:${app.server?.port}`);
+console.log(`🦊 Elysia Lobbio Support Server berjalan di http://localhost:${app.server?.port}`);

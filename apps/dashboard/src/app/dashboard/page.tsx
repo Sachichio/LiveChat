@@ -47,6 +47,15 @@ interface Message {
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+
+  const showToast = (message: string, type: "error" | "success" = "error") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 4500);
+  };
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -74,7 +83,7 @@ export default function DashboardPage() {
 
   // Auth check dengan Role Guard
   useEffect(() => {
-    const token = localStorage.getItem("livechat_token");
+    const token = localStorage.getItem("lobbio_support_token") || localStorage.getItem("livechat_token");
     const storedUser = localStorage.getItem("livechat_user");
     if (!token || !storedUser) {
       router.push("/login");
@@ -83,7 +92,7 @@ export default function DashboardPage() {
     try {
       const parsed = JSON.parse(storedUser);
       if (parsed.role !== "ADMIN" && parsed.role !== "AGENT") {
-        alert("Akses Ditolak: Halaman Dashboard hanya dapat diakses oleh Admin.");
+        showToast("Akses Ditolak: Halaman Dashboard hanya dapat diakses oleh Admin.", "error");
         localStorage.removeItem("livechat_token");
         localStorage.removeItem("livechat_user");
         router.push("/login");
@@ -91,6 +100,7 @@ export default function DashboardPage() {
       }
       setUser(parsed);
       fetchProjects(token);
+      setIsAuthChecking(false);
     } catch {
       router.push("/login");
     }
@@ -117,7 +127,7 @@ export default function DashboardPage() {
   // Fetch sessions when project changes
   useEffect(() => {
     if (!selectedProject) return;
-    const token = localStorage.getItem("livechat_token");
+    const token = localStorage.getItem("lobbio_support_token") || localStorage.getItem("livechat_token");
     if (!token) return;
 
     const fetchSessions = async () => {
@@ -214,20 +224,21 @@ export default function DashboardPage() {
     setInputMessage("");
   };
 
-  // Upload file attachment (max 5MB, image only)
+  // Upload file attachment (max 2MB, image only)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedSession || !socketRef.current) return;
 
-    if (!file.type.startsWith("image/")) {
-      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
+    const allowedMimes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+    if (!file.type || !allowedMimes.includes(file.type.toLowerCase())) {
+      showToast("Format file tidak didukung! Hanya gambar (PNG, JPG, JPEG, WEBP, GIF) yang diperbolehkan.", "error");
       e.target.value = "";
       return;
     }
 
-    const MAX_SIZE = 5 * 1024 * 1024;
+    const MAX_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
+      showToast("Ukuran file terlalu besar! Maksimal ukuran gambar adalah 2 MB.", "error");
       e.target.value = "";
       return;
     }
@@ -256,7 +267,7 @@ export default function DashboardPage() {
       );
       setInputMessage("");
     } catch (err: any) {
-      alert(err.message || "Gagal mengunggah gambar");
+      showToast(err.message || "Gagal mengunggah gambar", "error");
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -266,7 +277,7 @@ export default function DashboardPage() {
   // Create project
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem("livechat_token");
+    const token = localStorage.getItem("lobbio_support_token") || localStorage.getItem("livechat_token");
     if (!token || !newProjectName) return;
 
     try {
@@ -304,8 +315,36 @@ export default function DashboardPage() {
     router.push("/login");
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-500">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-1"></div>
+          <span className="text-sm font-medium">Memverifikasi Sesi...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans relative">
+      {/* FLOATING TOAST NOTIFICATION MODERN */}
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border bg-white border-red-200 text-red-700">
+          <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center shrink-0 text-red-600 font-bold">
+            ⚠️
+          </div>
+          <div className="text-xs sm:text-sm font-medium pr-2 max-w-sm">
+            {toast.message}
+          </div>
+          <button
+            onClick={() => setToast(null)}
+            className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* SIDEBAR: Projects & User Info */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between border-r border-slate-800">
         <div>
@@ -316,7 +355,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <h2 className="font-bold text-white text-base leading-tight">
-                LiveChat
+                Lobbio Support
               </h2>
               <span className="text-xs text-indigo-400">Admin Workspace</span>
             </div>
@@ -597,7 +636,7 @@ export default function DashboardPage() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept="image/*"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
                 className="hidden"
               />
               <form onSubmit={handleSendMessage} className="flex items-center gap-2">
@@ -605,7 +644,7 @@ export default function DashboardPage() {
                   type="button"
                   disabled={uploading}
                   onClick={() => fileInputRef.current?.click()}
-                  title="Unggah Gambar (Maks 5 MB)"
+                  title="Unggah Foto / Gambar (Maks 2MB)"
                   className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-indigo-600 transition flex items-center justify-center shrink-0 disabled:opacity-50"
                 >
                   <Plus className="w-4 h-4" />
@@ -614,7 +653,7 @@ export default function DashboardPage() {
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={uploading ? "Sedang mengunggah gambar (maks 5MB)..." : "Ketik balasan untuk pengunjung..."}
+                  placeholder={uploading ? "Sedang mengunggah gambar (maks 2MB)..." : "Ketik balasan untuk pengunjung..."}
                   disabled={uploading}
                   className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm text-slate-800 disabled:bg-slate-50"
                 />

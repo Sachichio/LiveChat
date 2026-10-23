@@ -122,3 +122,9 @@ dist
 # Uploaded Media Files
 apps/api/public/uploads/*
 !apps/api/public/uploads/.gitkeep
+
+# Internal Docs and Architecture (Do not push to GitHub)
+dokumentasi_*.md
+dokumentasi.md
+arsitektur-sistem.md
+workflow-agen.md

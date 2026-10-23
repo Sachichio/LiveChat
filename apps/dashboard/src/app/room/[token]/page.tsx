@@ -7,20 +7,19 @@ import {
   Send,
   User,
   Crown,
-  Radio,
   Share2,
   Check,
-  Sparkles,
-  ArrowRight,
   Shield,
   LogOut,
   KeyRound,
   UserPlus,
-  Plus
+  Plus,
+  Users
 } from "lucide-react";
 
 interface Message {
   id: string;
+  sessionId: string;
   senderType: "VISITOR" | "AGENT" | "MEMBER";
   senderId: string;
   content: string;
@@ -46,22 +45,33 @@ export default function PublicChatRoomPage() {
 
   // Authentication & Identity State
   const [currentMember, setCurrentMember] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<"guest" | "login" | "register">("guest");
+  const [currentAdmin, setCurrentAdmin] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<"guest" | "login" | "register" | "admin">("guest");
   const [guestName, setGuestName] = useState("");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const showToast = (message: string, type: "error" | "success" = "error") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 4500);
+  };
 
   // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Load project info & existing member or guest session
+  // Load project info (NO auto-login, always let user choose identity)
   useEffect(() => {
     if (!token) return;
 
@@ -73,23 +83,6 @@ export default function PublicChatRoomPage() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Room chat tidak ditemukan");
         setProject(data.project);
-
-        // Cek apakah ada member yang sedang login di browser ini
-        const savedMember = localStorage.getItem("livechat_member_user");
-        if (savedMember) {
-          try {
-            const memberObj = JSON.parse(savedMember);
-            setCurrentMember(memberObj);
-            joinRoomAsMember(memberObj, data.project);
-            return;
-          } catch {}
-        }
-
-        // Cek apakah ada nama tamu tersimpan
-        const savedGuest = localStorage.getItem("livechat_guest_name");
-        if (savedGuest) {
-          setGuestName(savedGuest);
-        }
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -100,68 +93,8 @@ export default function PublicChatRoomPage() {
     fetchProject();
   }, [token]);
 
-  // --- JOIN HANDLERS ---
-
-  // 1. Join Sebagai Member (Dengan Chat History Permanen)
-  const joinRoomAsMember = async (member: any, proj = project) => {
-    if (!token) return;
-
-    try {
-      const res = await fetch("http://localhost:4000/api/widget/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          widgetToken: token,
-          memberId: member.id,
-          visitorName: member.name || member.username
-        })
-      });
-      const data = await res.json();
-      if (data.session) {
-        setSession(data.session);
-        setMessages(data.session.messages || []);
-        setIsJoined(true);
-        connectWebSocket(data.session.id, "MEMBER", member.id);
-      }
-    } catch (err) {
-      console.error("Join as member error", err);
-    }
-  };
-
-  // 2. Join Sebagai Tamu (Anonim)
-  const joinRoomAsGuest = async (name: string) => {
-    if (!token) return;
-
-    let visitorId = localStorage.getItem("livechat_guest_vid");
-    if (!visitorId) {
-      visitorId = "gst_" + Math.random().toString(36).substring(2, 9);
-      localStorage.setItem("livechat_guest_vid", visitorId);
-    }
-
-    try {
-      const res = await fetch("http://localhost:4000/api/widget/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          widgetToken: token,
-          visitorId,
-          visitorName: name
-        })
-      });
-      const data = await res.json();
-      if (data.session) {
-        setSession(data.session);
-        setMessages(data.session.messages || []);
-        setIsJoined(true);
-        connectWebSocket(data.session.id, "VISITOR", visitorId);
-      }
-    } catch (err) {
-      console.error("Join as guest error", err);
-    }
-  };
-
   // Connect WebSocket Helper
-  const connectWebSocket = (sessionId: string, senderType: "MEMBER" | "VISITOR", senderId: string) => {
+  const connectWebSocket = (sessionId: string, senderType: "MEMBER" | "VISITOR" | "AGENT", senderId: string) => {
     if (socketRef.current) socketRef.current.close();
     const ws = new WebSocket("ws://localhost:4000/ws");
     socketRef.current = ws;
@@ -192,6 +125,93 @@ export default function PublicChatRoomPage() {
     };
   };
 
+  // --- JOIN HANDLERS ---
+
+  // 1. Join Sebagai Member (Dengan Chat History Permanen)
+  const joinRoomAsMember = async (member: any) => {
+    if (!token) return;
+
+    try {
+      const res = await fetch("http://localhost:4000/api/widget/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          widgetToken: token,
+          memberId: member.id,
+          visitorName: member.name || member.username
+        })
+      });
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+        setMessages(data.session.messages || []);
+        setIsJoined(true);
+        connectWebSocket(data.session.id, "MEMBER", member.id);
+      }
+    } catch (err: any) {
+      showToast("Gagal menghubungkan ke sesi obrolan", "error");
+    }
+  };
+
+  // 2. Join Sebagai Tamu (Anonim)
+  const joinRoomAsGuest = async (name: string) => {
+    if (!token) return;
+
+    // Selalu gunakan visitorId baru jika belum ada atau buat sesi tamu terisolasi
+    let visitorId = localStorage.getItem("livechat_guest_vid");
+    if (!visitorId) {
+      visitorId = "gst_" + Date.now().toString(36) + "_" + Math.random().toString(36).substring(2, 8);
+      localStorage.setItem("livechat_guest_vid", visitorId);
+    }
+
+    try {
+      const res = await fetch("http://localhost:4000/api/widget/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          widgetToken: token,
+          visitorId,
+          visitorName: name
+        })
+      });
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+        setMessages(data.session.messages || []);
+        setIsJoined(true);
+        connectWebSocket(data.session.id, "VISITOR", visitorId);
+      }
+    } catch (err: any) {
+      showToast("Gagal menghubungkan ke sesi obrolan", "error");
+    }
+  };
+
+  // 3. Join Sebagai Admin
+  const joinRoomAsAdmin = async (admin: any) => {
+    if (!token) return;
+
+    try {
+      const res = await fetch("http://localhost:4000/api/widget/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          widgetToken: token,
+          visitorId: "admin_" + admin.id,
+          visitorName: admin.name || "Admin"
+        })
+      });
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+        setMessages(data.session.messages || []);
+        setIsJoined(true);
+        connectWebSocket(data.session.id, "AGENT", admin.id);
+      }
+    } catch (err: any) {
+      showToast("Gagal menghubungkan ke sesi obrolan", "error");
+    }
+  };
+
   // --- FORM SUBMIT ACTIONS ---
 
   const handleGuestSubmit = (e: React.FormEvent) => {
@@ -201,15 +221,13 @@ export default function PublicChatRoomPage() {
     joinRoomAsGuest(guestName.trim());
   };
 
-  const handleMemberAuth = async (e: React.FormEvent) => {
+  const handleMemberLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError("");
 
-    const endpoint = activeTab === "register" ? "/api/member/register" : "/api/member/login";
-
     try {
-      const res = await fetch(`http://localhost:4000${endpoint}`, {
+      const res = await fetch("http://localhost:4000/api/member/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -219,37 +237,108 @@ export default function PublicChatRoomPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal memproses akun member");
+      if (!res.ok) throw new Error(data.error || "Gagal masuk");
 
       localStorage.setItem("livechat_member_token", data.token);
       localStorage.setItem("livechat_member_user", JSON.stringify(data.member));
       setCurrentMember(data.member);
-      joinRoomAsMember(data.member);
+      setAuthPassword("");
+      await joinRoomAsMember(data.member);
     } catch (err: any) {
-      setAuthError(err.message);
+      setAuthError(err.message || "Terjadi kesalahan koneksi");
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleMemberLogout = () => {
-    localStorage.removeItem("livechat_member_token");
+  const handleMemberRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const res = await fetch("http://localhost:4000/api/member/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: authUsername.trim(),
+          password: authPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mendaftar");
+
+      localStorage.setItem("livechat_member_token", data.token);
+      localStorage.setItem("livechat_member_user", JSON.stringify(data.member));
+      setCurrentMember(data.member);
+      setAuthPassword("");
+      await joinRoomAsMember(data.member);
+    } catch (err: any) {
+      setAuthError(err.message || "Terjadi kesalahan koneksi");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const res = await fetch("http://localhost:4000/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: adminEmail.trim(),
+          password: adminPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal masuk sebagai Admin");
+
+      localStorage.setItem("livechat_admin_token", data.token);
+      localStorage.setItem("livechat_admin_user", JSON.stringify(data.user));
+      setCurrentAdmin(data.user);
+      setAdminPassword("");
+      await joinRoomAsAdmin(data.user);
+    } catch (err: any) {
+      setAuthError(err.message || "Terjadi kesalahan koneksi");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Logout / Keluar
+  const handleLogout = () => {
+    localStorage.removeItem("livechat_admin_user");
+    localStorage.removeItem("livechat_admin_token");
     localStorage.removeItem("livechat_member_user");
+    localStorage.removeItem("livechat_member_token");
+    localStorage.removeItem("livechat_guest_name");
+    localStorage.removeItem("livechat_guest_vid");
+    setCurrentAdmin(null);
     setCurrentMember(null);
+    setGuestName("");
     setIsJoined(false);
     setSession(null);
     setMessages([]);
     if (socketRef.current) socketRef.current.close();
   };
 
+  // Kirim Pesan
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputMessage.trim() || !session || !socketRef.current) return;
 
-    const senderType = currentMember ? "MEMBER" : "VISITOR";
-    const senderId = currentMember
+    const senderType = currentAdmin ? "AGENT" : currentMember ? "MEMBER" : "VISITOR";
+    const senderId = currentAdmin
+      ? currentAdmin.id
+      : currentMember
       ? currentMember.id
-      : localStorage.getItem("livechat_guest_vid") || "guest";
+      : (localStorage.getItem("livechat_guest_vid") || "visitor");
 
     socketRef.current.send(
       JSON.stringify({
@@ -264,21 +353,22 @@ export default function PublicChatRoomPage() {
     setInputMessage("");
   };
 
-  // Upload file attachment (max 5MB, image only)
+  // Unggah Foto / Gambar (Maks 2MB)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !session || !socketRef.current) return;
 
-    if (!file.type.startsWith("image/")) {
-      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
-      e.target.value = "";
+    const allowedMimes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+    if (!file.type || !allowedMimes.includes(file.type.toLowerCase())) {
+      showToast("Format file tidak didukung! Hanya gambar (PNG, JPG, JPEG, WEBP, GIF) yang diperbolehkan.", "error");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
-    const MAX_SIZE = 5 * 1024 * 1024;
+    const MAX_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
-      e.target.value = "";
+      showToast("Ukuran file terlalu besar! Maksimal ukuran gambar adalah 2 MB.", "error");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
@@ -294,10 +384,12 @@ export default function PublicChatRoomPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal mengunggah file");
 
-      const senderType = currentMember ? "MEMBER" : "VISITOR";
-      const senderId = currentMember
+      const senderType = currentAdmin ? "AGENT" : currentMember ? "MEMBER" : "VISITOR";
+      const senderId = currentAdmin
+        ? currentAdmin.id
+        : currentMember
         ? currentMember.id
-        : localStorage.getItem("livechat_guest_vid") || "guest";
+        : (localStorage.getItem("livechat_guest_vid") || "visitor");
 
       socketRef.current.send(
         JSON.stringify({
@@ -311,82 +403,106 @@ export default function PublicChatRoomPage() {
       );
       setInputMessage("");
     } catch (err: any) {
-      alert(err.message || "Gagal mengunggah gambar");
+      showToast(err.message || "Gagal mengunggah gambar", "error");
     } finally {
       setUploading(false);
-      e.target.value = "";
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const handleCopyLink = () => {
-    if (typeof window !== "undefined") {
-      navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
+  // Loading Screen Zero Dark Flash
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
-        <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-sm font-medium">Menghubungkan ke Ruang Chat...</span>
-        </div>
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-slate-500">
+        <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm font-medium">Menghubungkan ke ruang obrolan...</p>
       </div>
     );
   }
 
-  if (error) {
+  // Error Screen Zero Dark Flash
+  if (error || !project) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-        <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md text-center text-white shadow-xl">
-          <div className="w-12 h-12 bg-rose-500/20 text-rose-400 rounded-xl flex items-center justify-center mx-auto mb-4 font-bold">
-            ✕
-          </div>
-          <h2 className="text-xl font-bold mb-2">Room Tidak Ditemukan</h2>
-          <p className="text-slate-400 text-sm">{error}</p>
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-slate-600 p-4 text-center">
+        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mb-4 shadow-sm">
+          <MessageSquare className="w-8 h-8" />
         </div>
+        <h1 className="text-xl font-bold text-slate-900 mb-2">Room Tidak Ditemukan</h1>
+        <p className="text-sm text-slate-500 max-w-sm">
+          {error || "Tautan yang Anda tuju mungkin salah atau telah dinonaktifkan oleh pemilik ruang."}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-0 md:p-6 font-sans">
-      <div className="w-full max-w-4xl h-screen md:h-[85vh] bg-slate-900 md:rounded-2xl border border-slate-800 flex flex-col overflow-hidden shadow-2xl">
+    <div className="flex h-screen bg-slate-100 text-slate-800 flex-col items-center justify-center overflow-hidden relative">
+      {/* FLOATING TOAST NOTIFICATION MODERN */}
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border bg-white border-red-200 text-red-700">
+          <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center shrink-0 text-red-600 font-bold">
+            ⚠️
+          </div>
+          <div className="text-xs sm:text-sm font-medium pr-2 max-w-sm">
+            {toast.message}
+          </div>
+          <button
+            onClick={() => setToast(null)}
+            className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div className="w-full max-w-4xl h-full sm:h-[94vh] flex flex-col bg-white sm:rounded-3xl border border-slate-200 shadow-xl overflow-hidden relative">
         
-        {/* ROOM TOP BAR */}
-        <header className="px-6 py-4 bg-slate-900/90 backdrop-blur border-b border-slate-800 flex items-center justify-between">
+        {/* HEADER ROOM */}
+        <div className="px-6 py-4 bg-white/90 backdrop-blur-md border-b border-slate-200 flex items-center justify-between z-10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-sky-500 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-500/25">
-              <MessageSquare className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/20">
+              <Users className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-white">
-                  {project?.name || "Live Chat Room"}
-                </h1>
-                <span className="text-[11px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium px-2 py-0.5 rounded-full flex items-center gap-1.5">
-                  <Radio className="w-3 h-3 animate-pulse text-emerald-400" />
-                  Live
+              <h2 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                {project.name}
+                <span className="text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">
+                  Support Edition
                 </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Ruang Obrolan Publik Pengunjung &amp; Admin
+              </h2>
+              <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Live Support Room
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {currentMember && isJoined && (
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700">
-                <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-                  <Shield className="w-3.5 h-3.5" /> @{currentMember.username}
-                </span>
+            {isJoined && (
+              <div className="flex items-center gap-2 mr-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                {currentAdmin ? (
+                  <span className="text-xs text-amber-700 font-bold flex items-center gap-1.5">
+                    <Crown className="w-3.5 h-3.5 text-amber-600" /> {currentAdmin.name || "Admin"}
+                  </span>
+                ) : currentMember ? (
+                  <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-emerald-600" /> @{currentMember.username}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-700 font-medium flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-slate-400" /> {guestName} (Tamu)
+                  </span>
+                )}
                 <button
-                  onClick={handleMemberLogout}
-                  title="Keluar Akun Member"
-                  className="text-slate-400 hover:text-rose-400 p-0.5 rounded transition ml-1"
+                  onClick={handleLogout}
+                  title="Ganti Identitas / Keluar"
+                  className="text-slate-400 hover:text-red-500 transition ml-1"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
@@ -395,163 +511,212 @@ export default function PublicChatRoomPage() {
 
             <button
               onClick={handleCopyLink}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition flex items-center gap-1.5 border border-slate-700"
-              title="Salin link room ini"
+              title="Bagikan Tautan Room"
+              className="p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 transition flex items-center gap-1.5 text-xs font-medium border border-slate-200 shadow-sm"
             >
-              {copied ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" /> Tersalin!
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-3.5 h-3.5" /> Bagikan Link
-                </>
-              )}
+              {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
+              <span className="hidden sm:inline">{copied ? "Tersalin!" : "Bagikan"}</span>
             </button>
           </div>
-        </header>
+        </div>
 
-        {/* JOIN SCREEN: 3 TABS (TAMU / LOGIN / DAFTAR) */}
+        {/* IDENTITY FORM CARD JIKA BELUM BERGABUNG */}
         {!isJoined ? (
-          <div className="flex-1 flex items-center justify-center p-6 bg-slate-950/50">
-            <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-6 md:p-8 rounded-2xl shadow-xl">
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 bg-slate-50/50">
+            <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xl">
               
-              <div className="text-center mb-6">
-                <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-sky-500 rounded-2xl flex items-center justify-center text-white mx-auto mb-3 shadow-lg shadow-indigo-500/25">
-                  <Sparkles className="w-6 h-6" />
-                </div>
-                <h2 className="text-lg font-bold text-white">
-                  Gabung ke {project?.name}
-                </h2>
-                <p className="text-slate-400 text-xs mt-1">
-                  Pilih cara masuk Anda untuk mulai berinteraksi.
-                </p>
-              </div>
-
-              {/* TAB SELECTOR */}
-              <div className="flex p-1 bg-slate-800/80 rounded-xl mb-6 text-xs font-semibold">
+              {/* Tab Selector (Tamu | Masuk | Daftar | Admin) */}
+              <div className="grid grid-cols-4 p-1 bg-slate-100 rounded-2xl mb-6 border border-slate-200 gap-1">
                 <button
-                  onClick={() => {
-                    setActiveTab("guest");
-                    setAuthError("");
-                  }}
-                  className={`flex-1 py-2 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  type="button"
+                  onClick={() => { setActiveTab("guest"); setAuthError(""); }}
+                  className={`py-2 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
                     activeTab === "guest"
-                      ? "bg-indigo-600 text-white shadow"
-                      : "text-slate-400 hover:text-white"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  <User className="w-3.5 h-3.5" /> Tamu (Anon)
+                  <User className="w-3.5 h-3.5" /> Tamu
                 </button>
                 <button
-                  onClick={() => {
-                    setActiveTab("login");
-                    setAuthError("");
-                  }}
-                  className={`flex-1 py-2 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  type="button"
+                  onClick={() => { setActiveTab("login"); setAuthError(""); }}
+                  className={`py-2 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
                     activeTab === "login"
-                      ? "bg-indigo-600 text-white shadow"
-                      : "text-slate-400 hover:text-white"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  <KeyRound className="w-3.5 h-3.5" /> Masuk Member
+                  <KeyRound className="w-3.5 h-3.5" /> Masuk
                 </button>
                 <button
-                  onClick={() => {
-                    setActiveTab("register");
-                    setAuthError("");
-                  }}
-                  className={`flex-1 py-2 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  type="button"
+                  onClick={() => { setActiveTab("register"); setAuthError(""); }}
+                  className={`py-2 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
                     activeTab === "register"
-                      ? "bg-indigo-600 text-white shadow"
-                      : "text-slate-400 hover:text-white"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  <UserPlus className="w-3.5 h-3.5" /> Daftar Akun
+                  <UserPlus className="w-3.5 h-3.5" /> Daftar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab("admin"); setAuthError(""); }}
+                  className={`py-2 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
+                    activeTab === "admin"
+                      ? "bg-amber-600 text-white shadow-sm"
+                      : "text-amber-700/80 hover:text-amber-800"
+                  }`}
+                >
+                  <Crown className="w-3.5 h-3.5" /> Admin
                 </button>
               </div>
 
               {authError && (
-                <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-xl text-xs text-center">
-                  {authError}
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 text-left">
+                  ⚠️ {authError}
                 </div>
               )}
 
-              {/* TAB 1: GUEST FORM */}
+              {/* Form 1: Tamu */}
               {activeTab === "guest" && (
-                <form onSubmit={handleGuestSubmit} className="space-y-4">
+                <form onSubmit={handleGuestSubmit} className="space-y-4 text-left">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Nama Samaran
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Nama Panggilan Tamu
                     </label>
                     <input
                       type="text"
                       required
-                      autoFocus
-                      placeholder="cth: PengunjungAnon"
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                      placeholder="cth: Budi, Traveler, Anonim"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm"
                     />
-                    <p className="text-[11px] text-slate-500 mt-1.5">
-                      💡 Masuk cepat tanpa password. Riwayat tersimpan di browser ini.
-                    </p>
                   </div>
                   <button
                     type="submit"
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-md shadow-indigo-600/30"
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-md shadow-indigo-600/20"
                   >
-                    Masuk Sebagai Tamu <ArrowRight className="w-4 h-4" />
+                    Masuk ke Ruang Obrolan
                   </button>
                 </form>
               )}
 
-              {/* TAB 2 & 3: MEMBER AUTH FORM */}
-              {(activeTab === "login" || activeTab === "register") && (
-                <form onSubmit={handleMemberAuth} className="space-y-3">
+              {/* Form 2: Masuk Member */}
+              {activeTab === "login" && (
+                <form onSubmit={handleMemberLogin} className="space-y-4 text-left">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                       Username Member
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="username_anda"
                       value={authUsername}
                       onChange={(e) => setAuthUsername(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                      placeholder="cth: budisantoso"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Password
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Kata Sandi
                     </label>
                     <input
                       type="password"
                       required
-                      placeholder="••••••••"
                       value={authPassword}
                       onChange={(e) => setAuthPassword(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                      placeholder="••••••••"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm"
                     />
                   </div>
-
-                  <p className="text-[11px] text-emerald-400/90 pt-1">
-                    ✨ Keuntungan Member: Riwayat percakapan tersimpan permanen di database, dapat dibuka dari HP/laptop manapun!
-                  </p>
-
                   <button
                     type="submit"
                     disabled={authLoading}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-md shadow-indigo-600/30 disabled:opacity-50 mt-2"
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-md shadow-indigo-600/20 disabled:opacity-50"
                   >
-                    {authLoading
-                      ? "Memproses..."
-                      : activeTab === "register"
-                      ? "Daftar Akun & Gabung"
-                      : "Masuk Akun Member"}
-                    <ArrowRight className="w-4 h-4" />
+                    {authLoading ? "Memverifikasi..." : "Masuk Akun Member"}
+                  </button>
+                </form>
+              )}
+
+              {/* Form 3: Daftar Member */}
+              {activeTab === "register" && (
+                <form onSubmit={handleMemberRegister} className="space-y-4 text-left">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Pilih Username Member
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={authUsername}
+                      onChange={(e) => setAuthUsername(e.target.value)}
+                      placeholder="cth: budisantoso"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Buat Kata Sandi
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder="Minimal 6 karakter"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-md shadow-indigo-600/20 disabled:opacity-50"
+                  >
+                    {authLoading ? "Mendaftarkan..." : "Daftar Akun & Gabung"}
+                  </button>
+                </form>
+              )}
+
+              {/* Form 4: Login Admin */}
+              {activeTab === "admin" && (
+                <form onSubmit={handleAdminLogin} className="space-y-4 text-left">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Email Admin
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      placeholder="admin@example.com"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Kata Sandi Admin
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-sm transition shadow-md shadow-amber-600/20 disabled:opacity-50"
+                  >
+                    {authLoading ? "Memverifikasi..." : "Masuk Sebagai Admin"}
                   </button>
                 </form>
               )}
@@ -559,14 +724,35 @@ export default function PublicChatRoomPage() {
           </div>
         ) : (
           <>
-            {/* MESSAGES FEED */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 bg-slate-950/20">
+            {/* MESSAGES FEED IN LIGHT MODE */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 bg-slate-50/50">
+              {/* BANNER EDUKASI: SIMPAN RIWAYAT CHAT */}
+              {!currentMember && !currentAdmin && (
+                <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 rounded-2xl p-3 px-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-indigo-900 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">💡</span>
+                    <span>
+                      Mengobrol sebagai <strong>{guestName || "Tamu"}</strong>. Ingin riwayat chat ini tersimpan permanen?
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsJoined(false);
+                      setActiveTab("register");
+                    }}
+                    className="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition shadow-sm text-[11px]"
+                  >
+                    Daftar Member Gratis →
+                  </button>
+                </div>
+              )}
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm">
-                  <MessageSquare className="w-10 h-10 mb-2 stroke-1 text-slate-600" />
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm">
+                  <MessageSquare className="w-10 h-10 mb-2 stroke-1 text-slate-300" />
                   <p>Belum ada riwayat pesan di ruang chat ini.</p>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Kirim pesan pertama untuk memulai obrolan dengan Admin!
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Kirim pesan pertama untuk memulai obrolan!
                   </p>
                 </div>
               ) : (
@@ -574,9 +760,11 @@ export default function PublicChatRoomPage() {
                   const isAgent = m.senderType === "AGENT";
                   const isMember = m.senderType === "MEMBER";
                   const isMe =
-                    (currentMember && m.senderId === currentMember.id) ||
-                    (!currentMember &&
-                      !isAgent &&
+                    (currentAdmin && m.senderType === "AGENT" && m.senderId === currentAdmin.id) ||
+                    (currentMember && m.senderType === "MEMBER" && m.senderId === currentMember.id) ||
+                    (!currentAdmin &&
+                      !currentMember &&
+                      m.senderType === "VISITOR" &&
                       typeof window !== "undefined" &&
                       m.senderId === localStorage.getItem("livechat_guest_vid"));
 
@@ -584,41 +772,45 @@ export default function PublicChatRoomPage() {
                     <div
                       key={m.id}
                       className={`flex gap-3 ${
-                        isMe
-                          ? "justify-end"
-                          : "justify-start"
+                        isMe ? "justify-end" : "justify-start"
                       }`}
                     >
                       {!isMe && (
                         <div
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 shadow-sm ${
                             isAgent
-                              ? "bg-gradient-to-tr from-amber-500 to-indigo-600 text-white shadow-md shadow-indigo-500/20"
+                              ? "bg-amber-500 text-white"
                               : isMember
-                              ? "bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-md"
-                              : "bg-slate-800 text-slate-300 border border-slate-700"
+                              ? "bg-emerald-600 text-white"
+                              : "bg-slate-200 text-slate-600"
                           }`}
                         >
-                          {isAgent ? <Crown className="w-4 h-4" /> : isMember ? <Shield className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                          {isAgent ? (
+                            <Crown className="w-4 h-4" />
+                          ) : isMember ? (
+                            <Shield className="w-4 h-4" />
+                          ) : (
+                            <User className="w-4 h-4" />
+                          )}
                         </div>
                       )}
 
                       <div className={`max-w-md ${isMe ? "items-end" : "items-start"}`}>
                         <div className="flex items-center gap-2 mb-1 px-1">
                           {isAgent ? (
-                            <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                              <Crown className="w-3 h-3 text-amber-400" /> Admin / Operator
+                            <span className="text-xs font-bold text-amber-600 flex items-center gap-1">
+                              <Crown className="w-3 h-3 text-amber-500" /> Admin / Operator
                             </span>
                           ) : isMember ? (
-                            <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                              <Shield className="w-3 h-3 text-emerald-400" /> Member
+                            <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
+                              <Shield className="w-3 h-3 text-emerald-500" /> Member
                             </span>
                           ) : (
-                            <span className="text-xs font-medium text-slate-400">
+                            <span className="text-xs font-medium text-slate-500">
                               {isMe ? "Anda (Tamu)" : "Pengunjung (Tamu)"}
                             </span>
                           )}
-                          <span className="text-[10px] text-slate-500">
+                          <span className="text-[10px] text-slate-400">
                             {new Date(m.createdAt).toLocaleTimeString([], {
                               hour: "2-digit",
                               minute: "2-digit"
@@ -628,11 +820,9 @@ export default function PublicChatRoomPage() {
 
                         <div
                           className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                            isAgent
-                              ? "bg-gradient-to-r from-indigo-950 to-slate-900 border border-indigo-500/30 text-indigo-100 rounded-tl-none"
-                              : isMe
+                            isMe
                               ? "bg-indigo-600 text-white rounded-tr-none"
-                              : "bg-slate-800 text-slate-100 border border-slate-700 rounded-tl-none"
+                              : "bg-white text-slate-800 border border-slate-200 rounded-tl-none"
                           }`}
                         >
                           {m.attachmentUrl && (
@@ -641,7 +831,7 @@ export default function PublicChatRoomPage() {
                                 src={m.attachmentUrl}
                                 alt="Lampiran"
                                 onClick={() => setLightboxImg(m.attachmentUrl!)}
-                                className="rounded-lg max-h-64 max-w-full object-cover border border-white/10 hover:opacity-90 transition cursor-pointer shadow-sm"
+                                className="rounded-lg max-h-64 max-w-full object-cover border border-slate-200 hover:opacity-90 transition cursor-pointer shadow-sm"
                                 title="Klik untuk memperbesar"
                               />
                             </div>
@@ -656,13 +846,13 @@ export default function PublicChatRoomPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* INPUT BAR */}
-            <div className="p-4 bg-slate-900 border-t border-slate-800">
+            {/* INPUT BAR LIGHT MODE */}
+            <div className="p-4 bg-white border-t border-slate-200">
               <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept="image/*"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
                 className="hidden"
               />
               <form onSubmit={handleSendMessage} className="flex items-center gap-2">
@@ -670,8 +860,8 @@ export default function PublicChatRoomPage() {
                   type="button"
                   disabled={uploading}
                   onClick={() => fileInputRef.current?.click()}
-                  title="Unggah Gambar (Maks 5 MB)"
-                  className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 hover:text-white transition flex items-center justify-center shrink-0 disabled:opacity-50"
+                  title="Unggah Foto / Gambar (Maks 2MB)"
+                  className="p-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center justify-center shrink-0 disabled:opacity-50"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -681,16 +871,22 @@ export default function PublicChatRoomPage() {
                   onChange={(e) => setInputMessage(e.target.value)}
                   placeholder={
                     uploading
-                      ? "Sedang mengunggah gambar (maks 5MB)..."
-                      : `Tulis pesan sebagai ${currentMember ? `@${currentMember.username}` : guestName || "Tamu"}...`
+                      ? "Sedang mengunggah gambar (maks 2MB)..."
+                      : `Tulis pesan sebagai ${
+                          currentAdmin
+                            ? currentAdmin.name || "Admin"
+                            : currentMember
+                            ? `@${currentMember.username}`
+                            : guestName || "Tamu"
+                        }...`
                   }
                   disabled={uploading}
-                  className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm disabled:opacity-60"
+                  className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-sm disabled:opacity-60"
                 />
                 <button
                   type="submit"
                   disabled={(!inputMessage.trim() && !uploading) || uploading}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-medium text-sm transition shadow-md shadow-indigo-600/30 shrink-0"
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-3 rounded-xl flex items-center gap-2 font-medium text-sm transition shadow-md shadow-indigo-600/20 shrink-0"
                 >
                   <Send className="w-4 h-4" />
                   <span className="hidden sm:inline">Kirim</span>

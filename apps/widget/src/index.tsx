@@ -15,6 +15,7 @@ const WS_BASE = "ws://localhost:4000/ws";
 
 interface Message {
   id: string;
+  sessionId: string;
   senderType: "VISITOR" | "MEMBER" | "AGENT";
   senderId: string;
   content: string;
@@ -30,17 +31,21 @@ function LiveChatWidget() {
 
   // Status Keanggotaan & Form
   const [isJoined, setIsJoined] = useState(false);
-  const [activeTab, setActiveTab] = useState<"guest" | "login" | "register">("guest");
+  const [activeTab, setActiveTab] = useState<"guest" | "login" | "register" | "admin">("guest");
   const [currentMember, setCurrentMember] = useState<any>(null);
+  const [currentAdmin, setCurrentAdmin] = useState<any>(null);
 
   // Form Fields
   const [guestName, setGuestName] = useState("");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -54,24 +59,8 @@ function LiveChatWidget() {
     scrollToBottom();
   }, [messages, isOpen]);
 
-  // Cek token atau sesi tersimpan saat pertama kali dibuka
-  useEffect(() => {
-    const savedMember = localStorage.getItem("livechat_member_user");
-    if (savedMember) {
-      try {
-        const member = JSON.parse(savedMember);
-        setCurrentMember(member);
-      } catch {}
-    }
-
-    const savedGuest = localStorage.getItem("livechat_guest_name");
-    if (savedGuest) {
-      setGuestName(savedGuest);
-    }
-  }, []);
-
   // WebSocket Connection Helper
-  const connectWebSocket = (sessionId: string, senderType: "MEMBER" | "VISITOR", senderId: string) => {
+  const connectWebSocket = (sessionId: string, senderType: "MEMBER" | "VISITOR" | "AGENT", senderId: string) => {
     if (socketRef.current) socketRef.current.close();
     const ws = new WebSocket(WS_BASE);
     socketRef.current = ws;
@@ -125,6 +114,7 @@ function LiveChatWidget() {
       }
     } catch (err) {
       console.error("Join as member error:", err);
+      setErrorToast("Gagal menghubungkan ke sesi chat");
     }
   };
 
@@ -134,7 +124,7 @@ function LiveChatWidget() {
 
     let visitorId = localStorage.getItem("livechat_guest_vid");
     if (!visitorId) {
-      visitorId = "gst_" + Math.random().toString(36).substring(2, 9);
+      visitorId = "gst_" + Date.now().toString(36) + "_" + Math.random().toString(36).substring(2, 8);
       localStorage.setItem("livechat_guest_vid", visitorId);
     }
 
@@ -158,25 +148,41 @@ function LiveChatWidget() {
       }
     } catch (err) {
       console.error("Join as guest error:", err);
+      setErrorToast("Gagal menghubungkan ke sesi chat");
     }
   };
 
-  // Buka Widget
-  const handleToggle = () => {
-    const nextState = !isOpen;
-    setIsOpen(nextState);
+  // 3. Gabung Sebagai Admin
+  const joinAsAdmin = async (admin: any) => {
+    if (!WIDGET_TOKEN) return;
 
-    // Jika member sudah login sebelumnya dan belum tersambung ke sesi
-    if (nextState && !isJoined) {
-      const savedMember = localStorage.getItem("livechat_member_user");
-      if (savedMember) {
-        try {
-          const member = JSON.parse(savedMember);
-          setCurrentMember(member);
-          joinAsMember(member);
-        } catch {}
+    try {
+      const res = await fetch(`${API_BASE}/api/widget/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          widgetToken: WIDGET_TOKEN,
+          visitorId: "admin_" + admin.id,
+          visitorName: admin.name || "Admin"
+        })
+      });
+
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+        setMessages(data.session.messages || []);
+        setIsJoined(true);
+        connectWebSocket(data.session.id, "AGENT", admin.id);
       }
+    } catch (err) {
+      console.error("Join as admin error:", err);
+      setErrorToast("Gagal menghubungkan ke sesi chat");
     }
+  };
+
+  // Buka / Tutup Widget (Tanpa auto-login: selalu mulai dari pemilihan identitas jika belum joined)
+  const handleToggle = () => {
+    setIsOpen(!isOpen);
   };
 
   // Handle Form Tamu
@@ -187,16 +193,14 @@ function LiveChatWidget() {
     joinAsGuest(guestName.trim());
   };
 
-  // Handle Form Member (Login / Register)
-  const handleMemberAuth = async (e: React.FormEvent) => {
+  // Handle Form Member Login
+  const handleMemberLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError("");
 
-    const endpoint = activeTab === "register" ? "/api/member/register" : "/api/member/login";
-
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/api/member/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -206,7 +210,7 @@ function LiveChatWidget() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal memproses akun member");
+      if (!res.ok) throw new Error(data.error || "Gagal masuk");
 
       localStorage.setItem("livechat_member_token", data.token);
       localStorage.setItem("livechat_member_user", JSON.stringify(data.member));
@@ -220,11 +224,79 @@ function LiveChatWidget() {
     }
   };
 
-  // Logout Member
+  // Handle Form Member Register
+  const handleMemberRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/member/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: authUsername.trim(),
+          password: authPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mendaftar");
+
+      localStorage.setItem("livechat_member_token", data.token);
+      localStorage.setItem("livechat_member_user", JSON.stringify(data.member));
+      setCurrentMember(data.member);
+      setAuthPassword("");
+      await joinAsMember(data.member);
+    } catch (err: any) {
+      setAuthError(err.message || "Terjadi kesalahan jaringan");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Handle Form Admin Login
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: adminEmail.trim(),
+          password: adminPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal masuk sebagai Admin");
+
+      localStorage.setItem("livechat_admin_token", data.token);
+      localStorage.setItem("livechat_admin_user", JSON.stringify(data.user));
+      setCurrentAdmin(data.user);
+      setAdminPassword("");
+      await joinAsAdmin(data.user);
+    } catch (err: any) {
+      setAuthError(err.message || "Terjadi kesalahan jaringan");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Logout / Ganti Identitas
   const handleLogout = () => {
+    localStorage.removeItem("livechat_admin_token");
+    localStorage.removeItem("livechat_admin_user");
     localStorage.removeItem("livechat_member_token");
     localStorage.removeItem("livechat_member_user");
+    localStorage.removeItem("livechat_guest_name");
+    localStorage.removeItem("livechat_guest_vid");
+    setCurrentAdmin(null);
     setCurrentMember(null);
+    setGuestName("");
     setIsJoined(false);
     setSession(null);
     setMessages([]);
@@ -236,8 +308,10 @@ function LiveChatWidget() {
     e.preventDefault();
     if (!inputValue.trim() || !session || !socketRef.current) return;
 
-    const senderType = currentMember ? "MEMBER" : "VISITOR";
-    const senderId = currentMember
+    const senderType = currentAdmin ? "AGENT" : currentMember ? "MEMBER" : "VISITOR";
+    const senderId = currentAdmin
+      ? currentAdmin.id
+      : currentMember
       ? currentMember.id
       : (localStorage.getItem("livechat_guest_vid") || "visitor");
 
@@ -254,20 +328,21 @@ function LiveChatWidget() {
     setInputValue("");
   };
 
-  // Upload file attachment (max 5MB, image only)
+  // Upload file attachment (max 2MB, image only)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !session || !socketRef.current) return;
 
-    if (!file.type.startsWith("image/")) {
-      alert("Hanya file gambar (PNG, JPG, JPEG, GIF, WEBP) yang diperbolehkan!");
+    const allowedMimes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+    if (!file.type || !allowedMimes.includes(file.type.toLowerCase())) {
+      setErrorToast("Format file tidak didukung! Hanya gambar (PNG, JPG, JPEG, WEBP, GIF) yang diperbolehkan.");
       e.target.value = "";
       return;
     }
 
-    const MAX_SIZE = 5 * 1024 * 1024;
+    const MAX_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      alert("Ukuran gambar terlalu besar! Maksimal 5 MB.");
+      setErrorToast("Ukuran file terlalu besar! Maksimal ukuran gambar adalah 2 MB.");
       e.target.value = "";
       return;
     }
@@ -284,8 +359,10 @@ function LiveChatWidget() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal mengunggah file");
 
-      const senderType = currentMember ? "MEMBER" : "VISITOR";
-      const senderId = currentMember
+      const senderType = currentAdmin ? "AGENT" : currentMember ? "MEMBER" : "VISITOR";
+      const senderId = currentAdmin
+        ? currentAdmin.id
+        : currentMember
         ? currentMember.id
         : (localStorage.getItem("livechat_guest_vid") || "visitor");
 
@@ -301,7 +378,7 @@ function LiveChatWidget() {
       );
       setInputValue("");
     } catch (err: any) {
-      alert(err.message || "Gagal mengunggah gambar");
+      setErrorToast(err.message || "Gagal mengunggah gambar");
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -317,7 +394,7 @@ function LiveChatWidget() {
             width: "360px",
             height: "530px",
             backgroundColor: "#ffffff",
-            borderRadius: "16px",
+            borderRadius: "20px",
             boxShadow: "0 10px 30px rgba(0,0,0,0.18), 0 4px 6px -2px rgba(0,0,0,0.05)",
             display: "flex",
             flexDirection: "column",
@@ -329,7 +406,7 @@ function LiveChatWidget() {
           {/* Header */}
           <div
             style={{
-              padding: "14px 16px",
+              padding: "14px 18px",
               backgroundColor: "#4f46e5",
               color: "#ffffff",
               display: "flex",
@@ -339,30 +416,39 @@ function LiveChatWidget() {
           >
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <h4 style={{ margin: 0, fontSize: "15px", fontWeight: "bold" }}>LiveChat</h4>
+                <h4 style={{ margin: 0, fontSize: "15px", fontWeight: "bold", letterSpacing: "-0.01em" }}>Lobbio Support</h4>
+                <span style={{ fontSize: "10px", backgroundColor: "rgba(255,255,255,0.2)", padding: "2px 7px", borderRadius: "10px", fontWeight: "600" }}>
+                  Support
+                </span>
+                {currentAdmin && (
+                  <span style={{ fontSize: "10px", backgroundColor: "#f59e0b", padding: "1px 6px", borderRadius: "10px", fontWeight: "bold" }}>
+                    👑 Admin
+                  </span>
+                )}
                 {currentMember && (
                   <span style={{ fontSize: "10px", backgroundColor: "#10b981", padding: "1px 6px", borderRadius: "10px", fontWeight: "bold" }}>
                     👤 {currentMember.username}
                   </span>
                 )}
               </div>
-              <p style={{ margin: "2px 0 0 0", fontSize: "11px", opacity: 0.85 }}>
-                {currentMember ? "Riwayat Chat Tersimpan Permanen" : "Tanyakan apa saja kepada kami"}
+              <p style={{ margin: "3px 0 0 0", fontSize: "11px", opacity: 0.9 }}>
+                {!isJoined ? "Pilih identitas untuk bergabung" : "Live Chat Support Room"}
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {currentMember && (
+              {isJoined && (
                 <button
                   onClick={handleLogout}
-                  title="Keluar dari akun member"
+                  title="Keluar / Ganti Akun"
                   style={{
                     background: "rgba(255,255,255,0.2)",
                     border: "none",
                     color: "#ffffff",
                     fontSize: "11px",
-                    padding: "3px 7px",
+                    padding: "3px 8px",
                     borderRadius: "6px",
-                    cursor: "pointer"
+                    cursor: "pointer",
+                    fontWeight: "500"
                   }}
                 >
                   Keluar
@@ -370,6 +456,7 @@ function LiveChatWidget() {
               )}
               <button
                 onClick={() => setIsOpen(false)}
+                aria-label="Tutup Chat"
                 style={{
                   background: "transparent",
                   border: "none",
@@ -386,50 +473,76 @@ function LiveChatWidget() {
 
           {/* Body Content */}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", backgroundColor: "#f8fafc" }}>
+            {errorToast && (
+              <div
+                style={{
+                  backgroundColor: "#fef2f2",
+                  color: "#b91c1c",
+                  fontSize: "11px",
+                  padding: "8px 12px",
+                  borderBottom: "1px solid #fecaca",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}
+              >
+                <span>⚠️ {errorToast}</span>
+                <button
+                  type="button"
+                  onClick={() => setErrorToast(null)}
+                  style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: "14px" }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {!isJoined ? (
               <div style={{ padding: "20px", display: "flex", flexDirection: "column", height: "100%", justifyContent: "center" }}>
-                {/* Mode Selector Mini Tabs */}
+                {/* 4 Mode Selector Tabs: Tamu | Masuk | Daftar | Admin */}
                 <div
                   style={{
-                    display: "flex",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
                     backgroundColor: "#e2e8f0",
-                    borderRadius: "10px",
+                    borderRadius: "12px",
                     padding: "3px",
-                    marginBottom: "16px"
+                    marginBottom: "20px",
+                    gap: "2px"
                   }}
                 >
                   <button
                     type="button"
                     onClick={() => { setActiveTab("guest"); setAuthError(""); }}
                     style={{
-                      flex: 1,
-                      padding: "6px",
+                      padding: "7px 4px",
                       fontSize: "12px",
-                      fontWeight: activeTab === "guest" ? "bold" : "normal",
-                      borderRadius: "8px",
+                      fontWeight: activeTab === "guest" ? "bold" : "600",
+                      borderRadius: "9px",
                       border: "none",
                       backgroundColor: activeTab === "guest" ? "#ffffff" : "transparent",
                       color: activeTab === "guest" ? "#4f46e5" : "#64748b",
                       cursor: "pointer",
-                      boxShadow: activeTab === "guest" ? "0 1px 2px rgba(0,0,0,0.05)" : "none"
+                      boxShadow: activeTab === "guest" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                      transition: "all 0.15s ease"
                     }}
                   >
-                    Tamu (Anon)
+                    Tamu
                   </button>
                   <button
                     type="button"
                     onClick={() => { setActiveTab("login"); setAuthError(""); }}
                     style={{
-                      flex: 1,
-                      padding: "6px",
+                      padding: "7px 4px",
                       fontSize: "12px",
-                      fontWeight: activeTab === "login" ? "bold" : "normal",
-                      borderRadius: "8px",
+                      fontWeight: activeTab === "login" ? "bold" : "600",
+                      borderRadius: "9px",
                       border: "none",
                       backgroundColor: activeTab === "login" ? "#ffffff" : "transparent",
                       color: activeTab === "login" ? "#4f46e5" : "#64748b",
                       cursor: "pointer",
-                      boxShadow: activeTab === "login" ? "0 1px 2px rgba(0,0,0,0.05)" : "none"
+                      boxShadow: activeTab === "login" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                      transition: "all 0.15s ease"
                     }}
                   >
                     Masuk
@@ -438,90 +551,109 @@ function LiveChatWidget() {
                     type="button"
                     onClick={() => { setActiveTab("register"); setAuthError(""); }}
                     style={{
-                      flex: 1,
-                      padding: "6px",
+                      padding: "7px 4px",
                       fontSize: "12px",
-                      fontWeight: activeTab === "register" ? "bold" : "normal",
-                      borderRadius: "8px",
+                      fontWeight: activeTab === "register" ? "bold" : "600",
+                      borderRadius: "9px",
                       border: "none",
                       backgroundColor: activeTab === "register" ? "#ffffff" : "transparent",
                       color: activeTab === "register" ? "#4f46e5" : "#64748b",
                       cursor: "pointer",
-                      boxShadow: activeTab === "register" ? "0 1px 2px rgba(0,0,0,0.05)" : "none"
+                      boxShadow: activeTab === "register" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                      transition: "all 0.15s ease"
                     }}
                   >
                     Daftar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab("admin"); setAuthError(""); }}
+                    style={{
+                      padding: "7px 4px",
+                      fontSize: "12px",
+                      fontWeight: activeTab === "admin" ? "bold" : "600",
+                      borderRadius: "9px",
+                      border: "none",
+                      backgroundColor: activeTab === "admin" ? "#d97706" : "transparent",
+                      color: activeTab === "admin" ? "#ffffff" : "#b45309",
+                      cursor: "pointer",
+                      boxShadow: activeTab === "admin" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                      transition: "all 0.15s ease"
+                    }}
+                  >
+                    Admin
                   </button>
                 </div>
 
                 {authError && (
                   <div style={{ backgroundColor: "#fee2e2", color: "#b91c1c", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", marginBottom: "12px" }}>
-                    {authError}
+                    ⚠️ {authError}
                   </div>
                 )}
 
-                {/* TAB 1: TAMU */}
+                {/* TAB 1: TAMU (IMAGE 2 DESIGN) */}
                 {activeTab === "guest" && (
-                  <form onSubmit={handleGuestSubmit} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div style={{ textAlign: "center", marginBottom: "4px" }}>
-                      <p style={{ margin: 0, fontWeight: "bold", fontSize: "14px", color: "#1e293b" }}>Mode Tamu Cepat</p>
-                      <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#64748b" }}>Mulai mengobrol tanpa perlu kata sandi.</p>
+                  <form onSubmit={handleGuestSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                    <div style={{ textAlign: "left" }}>
+                      <p style={{ margin: 0, fontSize: "13px", color: "#475569", fontWeight: "500" }}>
+                        Masuk cepat tanpa password:
+                      </p>
                     </div>
                     <input
                       type="text"
                       required
-                      placeholder="Ketik Nama Anda..."
+                      placeholder="Nama panggilan Anda..."
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
                       style={{
-                        padding: "10px 12px",
-                        borderRadius: "8px",
+                        padding: "11px 14px",
+                        borderRadius: "10px",
                         border: "1px solid #cbd5e1",
                         fontSize: "13px",
-                        outline: "none"
+                        outline: "none",
+                        backgroundColor: "#ffffff"
                       }}
                     />
                     <button
                       type="submit"
                       style={{
-                        padding: "10px",
-                        borderRadius: "8px",
+                        padding: "11px",
+                        borderRadius: "10px",
                         border: "none",
                         backgroundColor: "#4f46e5",
                         color: "#ffffff",
                         fontWeight: "bold",
                         cursor: "pointer",
-                        fontSize: "13px"
+                        fontSize: "13px",
+                        boxShadow: "0 4px 12px rgba(79, 70, 229, 0.25)"
                       }}
                     >
-                      Masuk Sebagai Tamu →
+                      Mulai Mengobrol →
                     </button>
                   </form>
                 )}
 
-                {/* TAB 2 & 3: MEMBER AUTH */}
-                {(activeTab === "login" || activeTab === "register") && (
-                  <form onSubmit={handleMemberAuth} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div style={{ textAlign: "center", marginBottom: "4px" }}>
-                      <p style={{ margin: 0, fontWeight: "bold", fontSize: "14px", color: "#1e293b" }}>
-                        {activeTab === "login" ? "Masuk Akun Member" : "Daftar Akun Member Baru"}
-                      </p>
-                      <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                        Riwayat percakapan Anda akan tersimpan permanen.
+                {/* TAB 2: MEMBER LOGIN */}
+                {activeTab === "login" && (
+                  <form onSubmit={handleMemberLogin} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ textAlign: "left", marginBottom: "2px" }}>
+                      <p style={{ margin: 0, fontSize: "13px", color: "#475569", fontWeight: "600" }}>
+                        Masuk Akun Member:
                       </p>
                     </div>
                     <input
                       type="text"
                       required
-                      placeholder="Username..."
+                      placeholder="Username Member..."
                       value={authUsername}
                       onChange={(e) => setAuthUsername(e.target.value)}
                       style={{
-                        padding: "9px 12px",
-                        borderRadius: "8px",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
                         border: "1px solid #cbd5e1",
                         fontSize: "13px",
-                        outline: "none"
+                        outline: "none",
+                        backgroundColor: "#ffffff"
                       }}
                     />
                     <input
@@ -531,29 +663,149 @@ function LiveChatWidget() {
                       value={authPassword}
                       onChange={(e) => setAuthPassword(e.target.value)}
                       style={{
-                        padding: "9px 12px",
-                        borderRadius: "8px",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
                         border: "1px solid #cbd5e1",
                         fontSize: "13px",
-                        outline: "none"
+                        outline: "none",
+                        backgroundColor: "#ffffff"
                       }}
                     />
                     <button
                       type="submit"
                       disabled={authLoading}
                       style={{
-                        padding: "10px",
-                        borderRadius: "8px",
+                        padding: "11px",
+                        borderRadius: "10px",
                         border: "none",
-                        backgroundColor: activeTab === "login" ? "#4f46e5" : "#10b981",
+                        backgroundColor: "#4f46e5",
                         color: "#ffffff",
                         fontWeight: "bold",
                         cursor: "pointer",
                         fontSize: "13px",
-                        opacity: authLoading ? 0.7 : 1
+                        opacity: authLoading ? 0.7 : 1,
+                        boxShadow: "0 4px 12px rgba(79, 70, 229, 0.25)"
                       }}
                     >
-                      {authLoading ? "Memproses..." : activeTab === "login" ? "Masuk Member →" : "Buat Akun Member Sekarang ✨"}
+                      {authLoading ? "Memverifikasi..." : "Masuk Member →"}
+                    </button>
+                  </form>
+                )}
+
+                {/* TAB 3: MEMBER REGISTER */}
+                {activeTab === "register" && (
+                  <form onSubmit={handleMemberRegister} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ textAlign: "left", marginBottom: "2px" }}>
+                      <p style={{ margin: 0, fontSize: "13px", color: "#475569", fontWeight: "600" }}>
+                        Daftar Akun Member Baru:
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Username yang diinginkan..."
+                      value={authUsername}
+                      onChange={(e) => setAuthUsername(e.target.value)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "13px",
+                        outline: "none",
+                        backgroundColor: "#ffffff"
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      placeholder="Kata Sandi (min 6 karakter)..."
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "13px",
+                        outline: "none",
+                        backgroundColor: "#ffffff"
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      style={{
+                        padding: "11px",
+                        borderRadius: "10px",
+                        border: "none",
+                        backgroundColor: "#10b981",
+                        color: "#ffffff",
+                        fontWeight: "bold",
+                        cursor: "pointer",
+                        fontSize: "13px",
+                        opacity: authLoading ? 0.7 : 1,
+                        boxShadow: "0 4px 12px rgba(16, 185, 129, 0.25)"
+                      }}
+                    >
+                      {authLoading ? "Mendaftarkan..." : "Daftar Akun Member →"}
+                    </button>
+                  </form>
+                )}
+
+                {/* TAB 4: ADMIN LOGIN */}
+                {activeTab === "admin" && (
+                  <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ textAlign: "left", marginBottom: "2px" }}>
+                      <p style={{ margin: 0, fontSize: "13px", color: "#b45309", fontWeight: "600" }}>
+                        Masuk Sebagai Admin / CS:
+                      </p>
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      placeholder="Email Admin..."
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "13px",
+                        outline: "none",
+                        backgroundColor: "#ffffff"
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      placeholder="Kata Sandi..."
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "13px",
+                        outline: "none",
+                        backgroundColor: "#ffffff"
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      style={{
+                        padding: "11px",
+                        borderRadius: "10px",
+                        border: "none",
+                        backgroundColor: "#d97706",
+                        color: "#ffffff",
+                        fontWeight: "bold",
+                        cursor: "pointer",
+                        fontSize: "13px",
+                        opacity: authLoading ? 0.7 : 1,
+                        boxShadow: "0 4px 12px rgba(217, 119, 6, 0.25)"
+                      }}
+                    >
+                      {authLoading ? "Memverifikasi..." : "Masuk Sebagai Admin →"}
                     </button>
                   </form>
                 )}
@@ -561,6 +813,44 @@ function LiveChatWidget() {
             ) : (
               /* CHAT MESSAGES */
               <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                {/* BANNER EDUKASI CONVERT TO MEMBER */}
+                {!currentMember && !currentAdmin && (
+                  <div
+                    style={{
+                      backgroundColor: "#eef2ff",
+                      border: "1px solid #e0e7ff",
+                      borderRadius: "10px",
+                      padding: "8px 10px",
+                      fontSize: "11px",
+                      color: "#3730a3",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "6px"
+                    }}
+                  >
+                    <span>💡 Simpan riwayat obrolan?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsJoined(false);
+                        setActiveTab("register");
+                      }}
+                      style={{
+                        backgroundColor: "#4f46e5",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: "6px",
+                        padding: "4px 8px",
+                        fontSize: "10px",
+                        fontWeight: "bold",
+                        cursor: "pointer"
+                      }}
+                    >
+                      Daftar Member →
+                    </button>
+                  </div>
+                )}
                 {messages.length === 0 ? (
                   <div style={{ textAlign: "center", color: "#94a3b8", fontSize: "12px", marginTop: "40px" }}>
                     Belum ada pesan. Silakan sapa Admin kami! 👋
@@ -653,7 +943,7 @@ function LiveChatWidget() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept="image/*"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
                 style={{ display: "none" }}
               />
               <form
@@ -668,7 +958,7 @@ function LiveChatWidget() {
                   type="button"
                   disabled={uploading}
                   onClick={() => fileInputRef.current?.click()}
-                  title="Unggah Gambar (Maks 5 MB)"
+                  title="Upload Foto/Gambar (Maks 2MB)"
                   style={{
                     width: "32px",
                     height: "32px",
@@ -689,7 +979,7 @@ function LiveChatWidget() {
                 </button>
                 <input
                   type="text"
-                  placeholder={uploading ? "Mengunggah gambar (maks 5MB)..." : "Tulis pesan..."}
+                  placeholder={uploading ? "Sedang mengunggah (maks 2MB)..." : "Tulis pesan..."}
                   value={inputValue}
                   disabled={uploading}
                   onChange={(e) => setInputValue(e.target.value)}
@@ -723,32 +1013,51 @@ function LiveChatWidget() {
               </form>
             </div>
           )}
+
+          {/* PERMANENT FOOTER (IMAGE 2 DESIGN) */}
+          <div style={{ padding: '8px 12px', textAlign: 'center', fontSize: '11px', color: '#94a3b8', backgroundColor: '#f8fafc', borderTop: '1px solid #f1f5f9', letterSpacing: '-0.01em' }}>
+            Didukung oleh <strong style={{ color: '#4f46e5' }}>Lobbio Support.</strong>
+          </div>
         </div>
       )}
 
-      {/* FLOATING ACTION BUTTON (FAB) */}
+      {/* FLOATING ACTION BUTTON (FAB) MATCHING IMAGE 1 */}
       <button
         onClick={handleToggle}
+        aria-label="Buka Lobbio Support Chat"
         style={{
-          width: "56px",
-          height: "56px",
-          borderRadius: "50%",
-          backgroundColor: "#4f46e5",
+          position: "relative",
+          width: "60px",
+          height: "60px",
+          borderRadius: "18px",
+          background: "linear-gradient(135deg, #6677f2, #4c5de0)",
           color: "#ffffff",
           border: "none",
-          boxShadow: "0 8px 20px rgba(79, 70, 229, 0.4)",
+          boxShadow: "0 13px 30px rgba(61, 79, 198, 0.35)",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           float: "right",
-          transition: "transform 0.2s"
+          transition: "transform 0.2s ease, box-shadow 0.2s ease"
         }}
       >
+        <span
+          style={{
+            position: "absolute",
+            top: "4px",
+            right: "4px",
+            width: "12px",
+            height: "12px",
+            backgroundColor: "#53d6a0",
+            border: "2px solid #ffffff",
+            borderRadius: "50%"
+          }}
+        />
         {isOpen ? (
-          <span style={{ fontSize: "22px" }}>✕</span>
+          <span style={{ fontSize: "20px", fontWeight: "bold" }}>✕</span>
         ) : (
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
         )}

@@ -2,8 +2,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "LiveChat Dashboard - Realtime Support",
-  description: "Dashboard manajemen obrolan live chat dan pengaturan widget.",
+  title: "Lobbio Support - Realtime Customer Care & Live Chat Bisnis",
+  description: "Platform live chat bisnis dan helpdesk real-time berkecepatan tinggi untuk meningkatkan kepuasan pelanggan dan konversi penjualan.",
 };
 
 export default function RootLayout({
