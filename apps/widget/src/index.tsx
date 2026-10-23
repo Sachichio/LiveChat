@@ -386,21 +386,34 @@ function LiveChatWidget() {
   };
 
   return (
-    <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 999999, fontFamily: "system-ui, -apple-system, sans-serif" }}>
+    <div
+      style={{
+        position: "fixed",
+        bottom: "20px",
+        right: "20px",
+        zIndex: 999999,
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        pointerEvents: "none"
+      }}
+    >
       {/* CHAT WINDOW */}
       {isOpen && (
         <div
           style={{
             width: "360px",
-            height: "530px",
+            height: "520px",
             backgroundColor: "#ffffff",
-            borderRadius: "20px",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.18), 0 4px 6px -2px rgba(0,0,0,0.05)",
+            borderRadius: "18px",
+            boxShadow: "0 12px 36px rgba(0, 0, 0, 0.18)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
             marginBottom: "16px",
-            border: "1px solid #e2e8f0"
+            border: "1px solid #e2e8f0",
+            pointerEvents: "auto"
           }}
         >
           {/* Header */}
@@ -498,16 +511,14 @@ function LiveChatWidget() {
             )}
 
             {!isJoined ? (
-              <div style={{ padding: "20px", display: "flex", flexDirection: "column", height: "100%", justifyContent: "center" }}>
+              <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
                 {/* 4 Mode Selector Tabs: Tamu | Masuk | Daftar | Admin */}
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4, 1fr)",
-                    backgroundColor: "#e2e8f0",
-                    borderRadius: "12px",
-                    padding: "3px",
-                    marginBottom: "20px",
+                    display: "flex",
+                    backgroundColor: "#f1f5f9",
+                    borderRadius: "10px",
+                    padding: "2px",
                     gap: "2px"
                   }}
                 >
@@ -515,10 +526,11 @@ function LiveChatWidget() {
                     type="button"
                     onClick={() => { setActiveTab("guest"); setAuthError(""); }}
                     style={{
-                      padding: "7px 4px",
-                      fontSize: "12px",
-                      fontWeight: activeTab === "guest" ? "bold" : "600",
-                      borderRadius: "9px",
+                      flex: 1,
+                      padding: "6px 2px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      borderRadius: "7px",
                       border: "none",
                       backgroundColor: activeTab === "guest" ? "#ffffff" : "transparent",
                       color: activeTab === "guest" ? "#4f46e5" : "#64748b",
@@ -533,10 +545,11 @@ function LiveChatWidget() {
                     type="button"
                     onClick={() => { setActiveTab("login"); setAuthError(""); }}
                     style={{
-                      padding: "7px 4px",
-                      fontSize: "12px",
-                      fontWeight: activeTab === "login" ? "bold" : "600",
-                      borderRadius: "9px",
+                      flex: 1,
+                      padding: "6px 2px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      borderRadius: "7px",
                       border: "none",
                       backgroundColor: activeTab === "login" ? "#ffffff" : "transparent",
                       color: activeTab === "login" ? "#4f46e5" : "#64748b",
@@ -551,10 +564,11 @@ function LiveChatWidget() {
                     type="button"
                     onClick={() => { setActiveTab("register"); setAuthError(""); }}
                     style={{
-                      padding: "7px 4px",
-                      fontSize: "12px",
-                      fontWeight: activeTab === "register" ? "bold" : "600",
-                      borderRadius: "9px",
+                      flex: 1,
+                      padding: "6px 2px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      borderRadius: "7px",
                       border: "none",
                       backgroundColor: activeTab === "register" ? "#ffffff" : "transparent",
                       color: activeTab === "register" ? "#4f46e5" : "#64748b",
@@ -569,10 +583,11 @@ function LiveChatWidget() {
                     type="button"
                     onClick={() => { setActiveTab("admin"); setAuthError(""); }}
                     style={{
-                      padding: "7px 4px",
-                      fontSize: "12px",
-                      fontWeight: activeTab === "admin" ? "bold" : "600",
-                      borderRadius: "9px",
+                      flex: 1,
+                      padding: "6px 2px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      borderRadius: "7px",
                       border: "none",
                       backgroundColor: activeTab === "admin" ? "#d97706" : "transparent",
                       color: activeTab === "admin" ? "#ffffff" : "#b45309",
@@ -586,16 +601,16 @@ function LiveChatWidget() {
                 </div>
 
                 {authError && (
-                  <div style={{ backgroundColor: "#fee2e2", color: "#b91c1c", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", marginBottom: "12px" }}>
+                  <div style={{ backgroundColor: "#fee2e2", color: "#b91c1c", padding: "8px 12px", borderRadius: "8px", fontSize: "12px", marginBottom: "4px" }}>
                     ⚠️ {authError}
                   </div>
                 )}
 
                 {/* TAB 1: TAMU (IMAGE 2 DESIGN) */}
                 {activeTab === "guest" && (
-                  <form onSubmit={handleGuestSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  <form onSubmit={handleGuestSubmit} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                     <div style={{ textAlign: "left" }}>
-                      <p style={{ margin: 0, fontSize: "13px", color: "#475569", fontWeight: "500" }}>
+                      <p style={{ margin: 0, fontSize: "12px", color: "#475569" }}>
                         Masuk cepat tanpa password:
                       </p>
                     </div>
@@ -606,8 +621,8 @@ function LiveChatWidget() {
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
                       style={{
-                        padding: "11px 14px",
-                        borderRadius: "10px",
+                        padding: "10px 12px",
+                        borderRadius: "8px",
                         border: "1px solid #cbd5e1",
                         fontSize: "13px",
                         outline: "none",
@@ -617,8 +632,8 @@ function LiveChatWidget() {
                     <button
                       type="submit"
                       style={{
-                        padding: "11px",
-                        borderRadius: "10px",
+                        padding: "10px",
+                        borderRadius: "8px",
                         border: "none",
                         backgroundColor: "#4f46e5",
                         color: "#ffffff",
@@ -1038,8 +1053,8 @@ function LiveChatWidget() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          float: "right",
-          transition: "transform 0.2s ease, box-shadow 0.2s ease"
+          transition: "transform 0.2s ease, box-shadow 0.2s ease",
+          pointerEvents: "auto"
         }}
       >
         <span
